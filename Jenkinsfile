@@ -1,6 +1,13 @@
 pipeline {
     agent any
 
+          parameters {
+        string(name: 'ECR_REPO_NAME', defaultValue: 'ekart', description: 'Enter repository name')
+        string(name: 'AWS_ACCOUNT_ID', defaultValue: '418274024791', description: 'Enter AWS Account ID') // Added missing quote
+    }
+    }
+
+    
     environment {
         SCANNER_HOME = tool 'sonar-scanner'
     }
@@ -61,38 +68,54 @@ pipeline {
             }
         }
         
-
-        stage('build and Tag docker image') {
+        
+        stage('6. Build Docker Image') {
             steps {
-                script {
-                        sh "docker build -t youngminds73/ekart:latest -f docker/Dockerfile ."
-                    }
+                sh "docker build -t ${params.ECR_REPO_NAME} ."
             }
         }
 
-        stage('Push image to Hub'){
-            steps{
-                script{
-                   withCredentials([string(credentialsId: 'dockerhub-pwd', variable: 'dockerhubpwd')]) {
-                   sh 'docker login -u youngminds73 -p ${dockerhubpwd}'}
-                   sh 'docker push youngminds73/ekart:latest'
-                }
-            }
-        }
-        stage('EKS and Kubectl configuration'){
-            steps{
-                script{
-                    sh 'aws eks update-kubeconfig --region ap-south-1 --name ankit-cluster'
-                }
-            }
-        }
-        stage('Deploy to k8s'){
-            steps{
-                script{
-                    sh 'kubectl apply -f deploymentservice.yml'
-                }
-            }
-        }
-    }
 
-}
+        
+        stage('7. Create ECR repo') {
+            steps {
+                withCredentials([string(credentialsId: 'access-key', variable: 'AWS_ACCESS_KEY'), 
+                                 string(credentialsId: 'secret-key', variable: 'AWS_SECRET_KEY')]) {
+                    sh """
+                    aws configure set aws_access_key_id $AWS_ACCESS_KEY
+                    aws configure set aws_secret_access_key $AWS_SECRET_KEY
+                    aws ecr describe-repositories --repository-names ${params.ECR_REPO_NAME} --region us-east-1 || \
+                    aws ecr create-repository --repository-name ${params.ECR_REPO_NAME} --region us-east-1
+                    """
+                }
+            }
+        }
+        
+        stage('8. Login to ECR & tag image') {
+            steps {
+                withCredentials([string(credentialsId: 'access-key', variable: 'AWS_ACCESS_KEY'), 
+                                 string(credentialsId: 'secret-key', variable: 'AWS_SECRET_KEY')]) {
+                    sh """
+                    aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin ${params.AWS_ACCOUNT_ID}.dkr.ecr.us-east-1.amazonaws.com
+                    docker tag ${params.ECR_REPO_NAME} ${params.AWS_ACCOUNT_ID}.dkr.ecr.us-east-1.amazonaws.com/${params.ECR_REPO_NAME}:${BUILD_NUMBER}
+                    docker tag ${params.ECR_REPO_NAME} ${params.AWS_ACCOUNT_ID}.dkr.ecr.us-east-1.amazonaws.com/${params.ECR_REPO_NAME}:latest
+                    """
+                }
+            }
+        }
+        
+            
+        stage('9. Push image to ECR') {
+            steps {
+                withCredentials([string(credentialsId: 'access-key', variable: 'AWS_ACCESS_KEY'), 
+                                 string(credentialsId: 'secret-key', variable: 'AWS_SECRET_KEY')]) {
+                    sh """
+                    docker push ${params.AWS_ACCOUNT_ID}.dkr.ecr.us-east-1.amazonaws.com/${params.ECR_REPO_NAME}:${BUILD_NUMBER}
+                    docker push ${params.AWS_ACCOUNT_ID}.dkr.ecr.us-east-1.amazonaws.com/${params.ECR_REPO_NAME}:latest
+                    """
+                }
+            }
+        }
+        }
+    
+    
