@@ -46,11 +46,10 @@ pipeline {
                 }
             }
         }
-
-        stage('OWASP Dependency Check') {
+        stage('3. Quality Gate') {
             steps {
-                dependencyCheck additionalArguments: '--scan ./', odcInstallation: 'DC'
-                dependencyCheckPublisher pattern: '**/dependency-check-report.xml'
+                waitForQualityGate abortPipeline: false, 
+                credentialsId: 'sonar-token'
             }
         }
 
@@ -59,15 +58,11 @@ pipeline {
                 sh "mvn package -DskipTests=true"
             }
         }
-
-        stage('deploy to Nexus') {
+        stage('5. Trivy Scan') {
             steps {
-                withMaven(globalMavenSettingsConfig: 'global-maven', jdk: 'jdk-17', maven: 'maven3', mavenSettingsConfig: '', traceability: true) {
-                    sh "mvn deploy -DskipTests=true"
-                }
+                sh "trivy fs . > trivy.txt"
             }
         }
-        
         
         stage('6. Build Docker Image') {
             steps {
